@@ -3,28 +3,28 @@
 #include <WiFiClientSecure.h>
 #include <MQTT.h>
 #include <FS.h>
+#include <SPIFFS.h>
+#include <SPIFFSIniFile.h>
 
-#define D3 3
-#define BUCKETPIN         D3         // Tipping Bucket Input
+#define BUCKETPIN         3         // Tipping Bucket Input
 #define BUCKETSIZE        0.2
 #define BUCKETDEBOUNCEMS  25
 #define SEALEVELPRESSURE_HPA (1013.25)
 
-// I2C is D1 and D2
 
 Adafruit_BME280 bme;
 WiFiClientSecure net;
 MQTTClient client;
 
 // Configuration data
-String wifi_ssid = "xxxx";
-String wifi_passphrase = "xxxx";
-String mqtt_server = "xxxx";
-String mqtt_username = "esp_inside";
-String mqtt_password = "ninjaninja";
-String mqtt_id = "kens_desk";
-uint16_t mqtt_port = 8883;
-int update_interval = 10;
+String wifi_ssid;
+String wifi_passphrase;
+String mqtt_server;
+String mqtt_username;
+String mqtt_password;
+String mqtt_id;
+uint16_t mqtt_port;
+int update_interval;
 
 
 // State Data
@@ -57,6 +57,24 @@ void rainfall_event() {
   }
 }
 
+// Helpers to make config reading less clunky
+String getValue(SPIFFSIniFile &file, const char *section, const char *key) {
+    String ret = "";
+    int buffer_len = 80;
+    char buffer[buffer_len];
+
+    if (file.getValue(section, key, buffer, buffer_len))
+      ret = String(buffer);
+
+    return ret;
+}
+
+int getInt(SPIFFSIniFile &file, const char *section, const char *key) {
+    String val = getValue(file, section, key);
+    return val.toInt();
+}
+
+// message handler for incoming messages
 void mqtt_msg(String &topic, String &payload) {
   Serial.println("Incoming: " + topic + " - " + payload);
 }
@@ -86,6 +104,8 @@ void update_reading() {
 }
 
 void setup() {
+  const char *settings_file = "/settings.ini";
+
   // Initialise Serial
   Serial.begin(9600);
   // Initialize the weather senitysor.
@@ -93,52 +113,30 @@ void setup() {
     Serial.println("Couldn't find BME280");
     return;
   }
-#if 0
+
   /* Initialise the SPI FFS, and load our config file */
   if (!SPIFFS.begin()) {
     Serial.println("Couldn't load SPIFFS");
     return;
   }
 
-  /* Open the configuration file */
-  File conf = SPIFFS.open("/weather.ini", "r");
-  if (!conf) {
-    Serial.println("Couldn't load config");
-    return;
+  SPIFFSIniFile ini(settings_file);
+
+  if (!ini.open()) {
+    Serial.println("Couldn't load settings");
   }
 
-  /* Parse the file */
-  while (true) {
-    String key;
-    /* Format is "key value\n" */
-    key = conf.readStringUntil(' ');
-    if (key == "ssid") {
-      wifi_ssid = conf.readStringUntil('\n');
-    } else if (key == "passphrase") {
-      wifi_passphrase = conf.readStringUntil('\n');
-    } else if (key == "mqtt_server") {
-      mqtt_server = conf.readStringUntil('\n');
-    } else if (key ==  "mqtt_username") {
-      mqtt_username = conf.readStringUntil('\n');
-    } else if (key == "mqtt_password") {
-      mqtt_password = conf.readStringUntil('\n');
-    } else if (key == "mqtt_id") {
-      mqtt_id = conf.readStringUntil('\n');
-    } else if (key == "mqtt_port") {
-      mqtt_port = conf.parseInt();
-      conf.readStringUntil('\n');
-    } else if (key == "update_interval") {
-      update_interval = conf.parseInt();
-      conf.readStringUntil('\n');
-    } else {
-      break;
-    }
-  }
-#endif
+  wifi_ssid = getValue(ini, "wifi", "ssid");
+  wifi_passphrase = getValue(ini, "wifi", "passphrase");
+  mqtt_server = getValue(ini, "mqtt", "server");
+  mqtt_port = getInt(ini, "mqtt", "port");
+  mqtt_username = getValue(ini, "mqtt", "username");
+  mqtt_password = getValue(ini, "mqtt", "password");
+  mqtt_id = getValue(ini, "mqtt", "topic");
+  update_interval = getInt(ini, "mqtt", "update_interval");
+
   Serial.print("Read configuration - connecting to Network: ");
   Serial.print(wifi_ssid);
-  Serial.print(" with passphrase: ");
-  Serial.println(wifi_passphrase);
 
   WiFi.begin(wifi_ssid.c_str(), wifi_passphrase.c_str());
   Serial.print("\r\nConnecting to network");
@@ -158,7 +156,7 @@ void setup() {
   pinMode(BUCKETPIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(BUCKETPIN), rainfall_event, FALLING);
 
-  Serial.println("Connecting to MQTT Server: " + mqtt_server + ":" + mqtt_port + " with credentials: " + mqtt_username + ":" + mqtt_password);
+  Serial.println("Connecting to MQTT Server: " + mqtt_server + ":" + mqtt_port);
   Serial.println("Updates every " + String(update_interval) + " seconds");
 
   client.begin(mqtt_server.c_str(), mqtt_port, net);
