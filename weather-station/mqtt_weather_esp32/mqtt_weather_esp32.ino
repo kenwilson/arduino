@@ -20,8 +20,17 @@ MQTTClient client;
 String wifi_ssid;
 String wifi_passphrase;
 String mqtt_server;
+String auth_method;
 String mqtt_username;
 String mqtt_password;
+String cafile;
+String certfile;
+String certkey;
+
+char cacert_buf[2048];
+char cert_buf[2048];
+char certkey_buf[2048];
+
 String mqtt_id;
 uint16_t mqtt_port;
 int update_interval;
@@ -130,10 +139,28 @@ void setup() {
   wifi_passphrase = getValue(ini, "wifi", "passphrase");
   mqtt_server = getValue(ini, "mqtt", "server");
   mqtt_port = getInt(ini, "mqtt", "port");
-  mqtt_username = getValue(ini, "mqtt", "username");
-  mqtt_password = getValue(ini, "mqtt", "password");
   mqtt_id = getValue(ini, "mqtt", "topic");
   update_interval = getInt(ini, "mqtt", "update_interval");
+  Serial.println("checking for cert auth");
+  auth_method = getValue(ini, "mqtt", "auth");
+  if (auth_method == "cert") {
+    Serial.println("doing cert auth");
+    cafile = getValue(ini, "mqtt", "cafile");
+    certfile = getValue(ini, "mqtt", "cert");
+    certkey = getValue(ini, "mqtt", "cert_key");
+
+    /* Load certificates into buffers */
+    File file = SPIFFS.open(cafile, "r");
+    file.readBytes(cacert_buf, 2048);
+    file = SPIFFS.open(certfile, "r");
+    file.readBytes(cert_buf, 2048);
+    file = SPIFFS.open(certkey, "r");
+    file.readBytes(certkey_buf, 2048);
+    
+  } else {
+    mqtt_username = getValue(ini, "mqtt", "username");
+    mqtt_password = getValue(ini, "mqtt", "password");
+  }
 
   Serial.print("Read configuration - connecting to Network: ");
   Serial.print(wifi_ssid);
@@ -159,9 +186,21 @@ void setup() {
   Serial.println("Connecting to MQTT Server: " + mqtt_server + ":" + mqtt_port);
   Serial.println("Updates every " + String(update_interval) + " seconds");
 
+  if (auth_method == "cert") {
+    //net.setCACert(cacert_buf);
+    Serial.println("Setting Client Cert");
+    net.setCertificate(cert_buf);
+    net.setPrivateKey(certkey_buf);
+  }
   client.begin(mqtt_server.c_str(), mqtt_port, net);
   client.onMessage(mqtt_msg);
-  while (!client.connect(mqtt_id.c_str(), mqtt_username.c_str(), mqtt_password.c_str())) {
+  bool connected = false;
+  while (!connected) {
+    if (auth_method == "cert") {
+      connected = client.connect(mqtt_id.c_str());
+    } else {
+      connected = client.connect(mqtt_id.c_str(), mqtt_username.c_str(), mqtt_password.c_str());
+    }
     Serial.print(".");
     delay(1000);
   }
